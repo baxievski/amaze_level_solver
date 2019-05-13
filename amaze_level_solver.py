@@ -4,10 +4,9 @@ import random
 import xml.etree.ElementTree as ET  
 
 
-class Ball:
+class Node:
     def __init__(self, y, x):
         """
-        append to self.moves_made on each move
         """
         self.y = y
         self.x = x
@@ -15,8 +14,6 @@ class Ball:
         self.right = None
         self.up = None
         self.down = None
-        # [ ] TODO probably doesn't belong here
-        self.moves_made = []
 
     def __repr__(self):
         dir_arrows = {
@@ -29,10 +26,11 @@ class Ball:
         for d in ('left', 'right', 'up', 'down'):
             if getattr(self, d) is not None:
                 repr_edges += dir_arrows[d]
-        return f'({self.y}, {self.x}) {repr_edges}'
+        return f'V({self.y}, {self.x})'
 
 
 class Maze:
+    # TODO: split into 2 classes: Maze (only maze generation and calculation of start position), Game - (moves and everything remaining)
     directions = {
         'left': (0, -1),
         'right': (0, 1),
@@ -54,9 +52,8 @@ class Maze:
                 data = elem.find('data').text
         _d = data.replace('\n', '').split(',')
         self.layout = [_d[y * width : (y+1) * width] for y in range(height)]
-        self.ball_possitions = {}
         self.reset_solved_state()
-        self.balls = {}
+        self.nodes = {}
 
     def __repr__(self):
         r_layout = '\n'.join(' '.join(x) for x in self.layout)
@@ -102,41 +99,44 @@ class Maze:
     def start(self):
         if self.start_position is None:
             raise Exception("Can not place ball on level")
-        y_pos = self.start_position[0]
-        x_pos = self.start_position[1]
-        self.ball_possitions
-        self.ball = Ball(y_pos, x_pos)
-        self.balls[(y_pos, x_pos)] = self.ball
-        self.solved_state[y_pos][x_pos] = '9'
+        y_start = self.start_position[0]
+        x_start = self.start_position[1]
+        if self.start_position in self.nodes:
+            self.ball = self.nodes[self.start_position][0]
+        else:
+            self.ball = Node(y_start, x_start)
+            self.nodes[self.start_position] = [self.ball, self.possible_moves(self.start_position), []]
+        self.solved_state[y_start][x_start] = '9'
     
-    def possible_moves(self, y, x):
-        moves = {}
+    def possible_moves(self, position):
+        moves = []
+        y, x = position
         for d in Maze.directions:
             y_offset = Maze.directions[d][0]
             x_offset = Maze.directions[d][1]
             if self.layout[y + y_offset][x + x_offset] in ('1', '2'):
-                if d not in moves.keys():
-                    moves[d] = None
+                if d not in moves:
+                    moves.append(d)
         return moves
 
     def move_ball(self, direction):
         """ go until the ball hits a wall """
-        if direction not in self.possible_moves(self.ball.y, self.ball.x):
+        if direction not in self.possible_moves((self.ball.y, self.ball.x)):
             raise Exception(f'Can not move {direction}!')
-        self.ball.moves_made.append(direction)
+        self.nodes[(self.ball.y, self.ball.x)][2].append(direction)
         previous_ball = self.ball
-        while direction in self.possible_moves(self.ball.y, self.ball.x):
+        while direction in self.possible_moves((self.ball.y, self.ball.x)):
             y_offset = Maze.directions[direction][0]
             x_offset = Maze.directions[direction][1]
             y_next = self.ball.y + y_offset
             x_next = self.ball.x + x_offset
-            new_ball = Ball(y_next, x_next)
+            new_ball = Node(y_next, x_next)
             self.solved_state[y_next][x_next] = '9'
             self.ball = new_ball
-        if (y_next, x_next) in self.balls:
-            self.ball = self.balls[(y_next, x_next)]
+        if (y_next, x_next) in self.nodes:
+            self.ball = self.nodes[(y_next, x_next)][0]
         else:
-            self.balls[(y_next, x_next)] = self.ball
+            self.nodes[(y_next, x_next)] = [self.ball, self.possible_moves((y_next, x_next)), []]
         setattr(previous_ball, direction, self.ball)
 
     def create_graph(self):
@@ -149,18 +149,52 @@ class Maze:
         #          if it is not solvable at this point - it will not be solvable "regularly"
         self.reset_solved_state()
         self.reset_moves_made()
+        self.start()
     
+    def create_state_space_trees(self):
+        self.create_graph()
+        state_space_trees = {}
+        move_trees = {}
+        for pos in self.nodes.keys():
+            level = 0
+            state_space_tree = {level: [[self.nodes[pos][0]]]}
+            move_tree = {level: [[]]}
+            passed_nodes = []
+            all_nodes = set([self.nodes[pos][0] for pos in self.nodes.keys()])
+            while set(passed_nodes) != all_nodes:
+                nodes_on_level = []
+                moves_on_level = []
+                for i, previous_nodes in enumerate(state_space_tree[level]):
+                    node = previous_nodes[-1]
+                    previous_moves = move_tree[level][i]
+                    if node in passed_nodes:
+                        continue
+                    nodes_on_level += [previous_nodes + [getattr(node, direction), ] for direction in self.nodes[(node.y, node.x)][1]]
+                    moves_on_level += [previous_moves + [direction, ] for direction in self.nodes[(node.y, node.x)][1]]
+                    passed_nodes.append(node)
+                level += 1
+                if level not in state_space_tree:
+                    state_space_tree[level] = []
+                if level not in move_tree:
+                    move_tree[level] = []
+                state_space_tree[level] += (nodes_on_level)
+                move_tree[level] += moves_on_level
+            state_space_trees[pos] = state_space_tree
+            move_trees[pos] = move_tree
+        self.state_space_trees = state_space_trees
+        self.move_trees = move_trees
+
     def reset_moves_made(self):
-        for pos in self.balls:
-            self.balls[pos].moves_made = []
+        for pos in self.nodes:
+            self.nodes[pos][2] = []
     
     def visit_all_adjacent_nodes(self, node=None):
         if node is None:
             node = self.ball
-        possible_moves = list(self.possible_moves(node.y, node.x).keys())
+        possible_moves = self.possible_moves((node.y, node.x))
         for direction in possible_moves:
             self.ball = node
-            if direction in self.ball.moves_made:
+            if direction in self.nodes[(node.y, node.x)][2]:
                 continue
             self.move_ball(direction)
             self.visit_all_adjacent_nodes(self.ball)
@@ -187,11 +221,21 @@ def main():
     # [ ] TODO convert the graph to a state space tree
     #          https://stackoverflow.com/questions/44875681/how-do-i-implement-a-state-space-tree-which-is-a-binary-tree-in-python
     maze = Maze(amaze_level_path)
-    maze.start()
-    maze.create_graph()
+    maze.create_state_space_trees()
     print(maze)
-    for k in maze.balls.keys():
-        print(k)
+    # print(f"sst = {maze.state_space_trees}")
+    level = 0
+    # TODO: creade a function that returns the direction to the shallowest subtree
+    # TODO: create a function that 
+    # while True:
+    #     if level not in sst:
+    #         break
+    #     for i in sst[level]:
+    #         print(f"level: {level}: {i}")
+    #     level += 1
+
+    # print(maze.state_space_tree)
+    # print(f"\n{maze.balls}")
 
 
 if __name__ == '__main__':
