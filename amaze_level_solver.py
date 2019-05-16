@@ -56,6 +56,10 @@ class Maze:
         self.reset_solved_state()
         self.nodes = {}
         self.moves_made = []
+        self.done_nodes = []
+        self.nodes_to_return_to = []
+        self.level = 0
+        self.log = False
 
     def __repr__(self):
         r_layout = '\n'.join(' '.join(x) for x in self.layout)
@@ -101,6 +105,7 @@ class Maze:
     def start(self):
         if self.start_position is None:
             raise Exception("Can not place ball on level")
+        self.done_nodes = []
         y_start = self.start_position[0]
         x_start = self.start_position[1]
         if self.start_position in self.nodes:
@@ -126,6 +131,8 @@ class Maze:
         if direction not in self.possible_moves((self.ball.y, self.ball.x)):
             raise Exception(f'Can not move {direction}!')
         self.nodes[(self.ball.y, self.ball.x)][2].append(direction)
+        if set(self.nodes[(self.ball.y, self.ball.x)][1]) == set(self.nodes[(self.ball.y, self.ball.x)][2]):
+            self.done_nodes.append(self.ball)
         self.moves_made.append(direction)
         previous_ball = self.ball
         while direction in self.possible_moves((self.ball.y, self.ball.x)):
@@ -218,6 +225,7 @@ class Maze:
         return None
     
     def get_depth_for_subtree(self, node, level):
+        # TODO: see about using self.level instead of level
         max_depth = {}
         n_subsequence = []
         for i, s in enumerate(self.state_space_trees[self.start_position][level]):
@@ -236,11 +244,101 @@ class Maze:
                         continue
         return max_depth
 
+    def return_to_node(self, node, level):
+        route_back = self.get_shortest_route(self.ball, node)
+        if route_back is None:
+            print(f"No route from {self.ball} to {node}")
+            # FIXME: doesn't make sense
+            return None
+        for direction in route_back[1]:
+            if self.is_solved:
+                return self.walk_shallowest_subtree()
+            self.move_ball(direction)
+        self.level = level
+        # TODO: check if there are more than 1 available direction
+        self.nodes_to_return_to = self.nodes_to_return_to[:-1]
+        if self.log:
+            print(f"-> {self.ball} on level {self.level}")
+        return self.walk_shallowest_subtree()
+    
+    def get_lowest_level_of_node(self, node):
+        sst = self.state_space_trees[self.start_position]
+        for l, nodes in sst.items():
+            for n in nodes:
+                if node in n:
+                    return l
+
+    def walk_shallowest_subtree(self):
+        if self.log:
+            print(f"is solved {self.is_solved}\n{self}")
+        depth_of_current_subtree = max(self.get_depth_for_subtree(self.ball, self.level).items(), key=itemgetter(1))[1]
+        if self.is_solved:
+            return
+        if self.level == depth_of_current_subtree - 1:
+            possible_directions = self.nodes[(self.ball.y, self.ball.x)][1]
+            possible_next_nodes = [getattr(self.ball, d) for d in possible_directions]
+            l = self.level
+            chosen_direction = None
+            for d, n in zip(possible_directions, possible_next_nodes):
+                if self.get_lowest_level_of_node(n) <= l+1:
+                    l = self.get_lowest_level_of_node(n)
+                    chosen_direction = d
+            if self.log:
+                print(f"Solved: {self.is_solved} - at {self.ball} on level {self.level} - taking {chosen_direction} to {getattr(self.ball, chosen_direction)}")
+            self.move_ball(chosen_direction)
+            self.level += 1
+            return self.walk_shallowest_subtree()
+        if self.level >= depth_of_current_subtree - 1:
+            if self.nodes_to_return_to not in ([], None):
+                node_to_return_to = self.nodes_to_return_to[-1][0]
+                level_to_return_to = self.nodes_to_return_to[-1][1]
+                return self.return_to_node(node_to_return_to, level_to_return_to)
+            if self.log:
+                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.nodes[(self.ball.y, self.ball.x)]}")
+            all_nodes = set(self.nodes[n][0] for n in self.nodes)
+            done_nodes = set(self.done_nodes)
+            if self.ball not in done_nodes:
+                if self.log:
+                    print(f"Current node done: {self.ball in done_nodes}\nRemaining nodes: {all_nodes - done_nodes}")
+                    # TODO: check if a move takes us straight to a node that is not in done_nodes
+            return
+        directions_taken = self.nodes[(self.ball.y, self.ball.x)][2]
+        directions_to_nodes_that_need_returning_to = []
+        for d in self.nodes[(self.ball.y, self.ball.x)][1]:
+            for n in self.nodes_to_return_to:
+                if n[0] == getattr(self.ball, d):
+                    directions_to_nodes_that_need_returning_to.append(d)
+        directions_to_done_nodes = []
+        for d in self.nodes[(self.ball.y, self.ball.x)][1]:
+            for n in self.done_nodes:
+                if n == getattr(self.ball, d):
+                    directions_to_done_nodes.append(d)
+        depth_of_remaining_directions = {}
+        for direction, depth in self.get_depth_for_subtree(self.ball, self.level).items():
+            if direction in directions_taken:
+                continue
+            if direction in directions_to_done_nodes:
+                continue
+            if direction in directions_to_nodes_that_need_returning_to:
+                continue
+            depth_of_remaining_directions[direction] = depth
+        chosen_direction, _ = min(depth_of_remaining_directions.items(), key=itemgetter(1))
+        if len(depth_of_remaining_directions) > 1:
+            self.nodes_to_return_to.append((self.ball, self.level))
+        else:
+            self.done_nodes.append(self.ball)
+        if self.log:
+            print(f"Solved: {self.is_solved} - at {self.ball} on level {self.level} - taking {chosen_direction} to {getattr(self.ball, chosen_direction)}")
+        self.move_ball(chosen_direction)
+        self.level += 1
+        return self.walk_shallowest_subtree()
+
 
 def main():
     # TODO: note limitation in README.md - valid ball positions are only vertices - otherwise the whole thing crumbles down
     parser = argparse.ArgumentParser(description='Utility for solving AMAZE levels')
     parser.add_argument("--level", help='Path to the AMAZE level xml file', required=True)
+    parser.add_argument("--log", help='Enable extra printing', default=False, required=False)
     args, _ = parser.parse_known_args()
     amaze_level_path = os.path.abspath(args.level)
 
@@ -248,97 +346,13 @@ def main():
         raise Exception(f"File {amaze_level_path} not found")
 
     maze = Maze(amaze_level_path)
+    if args.log:
+        maze.log = True
     maze.create_state_space_trees()
-    level = 0
-    state_space_tree = maze.state_space_trees[maze.start_position]
-    visited_nodes = [maze.ball, ]
-    finished_nodes = []
-    need_returning_nodes = []
-    while not maze.is_solved:
-        print(f"-------{maze.ball}, {maze.has_node_taken_all_available_directions(maze.ball)}\n{maze}")
-        not_needed_directions = []
-        current_position = (maze.ball.y, maze.ball.x)
-        nodes_on_level = [n[-1] for n in state_space_tree[level]]
-        possible_directions = maze.nodes[(maze.ball.y, maze.ball.x)][1]
-        taken_directions = maze.nodes[(maze.ball.y, maze.ball.x)][2]
-        subtrees_depths = maze.get_depth_for_subtree(maze.ball, level)
-        for taken_direction in taken_directions:
-            if taken_direction in subtrees_depths:
-                del subtrees_depths[taken_direction]
-        for d in possible_directions:
-            if getattr(maze.ball, d) in finished_nodes + [x[0] for x in need_returning_nodes]:
-                not_needed_directions.append(d)
-                if d in subtrees_depths and len(subtrees_depths) > 1:
-                    del subtrees_depths[d]
-        # previous_node = maze.ball
-        if not subtrees_depths:
-            path_back = maze.get_shortest_route(maze.ball, need_returning_nodes[0][0])
-            # print(f"Return to {need_returning_nodes[0]}: {path_back}")
-            level = need_returning_nodes[0][1]
-            for d in path_back[1]:
-                previous_node = maze.ball
-                maze.move_ball(d)
-                print(f"{d}, {maze.ball}, {maze.has_node_taken_all_available_directions(maze.ball)}\n{maze}")
-                visited_nodes.append(maze.ball)
-                returned_nodes = []
-                for n in need_returning_nodes:
-                    if maze.has_node_taken_all_available_directions(previous_node):
-                        returned_nodes.append(n)
-                    if n[0] == maze.ball:
-                        returned_nodes.append(n)
-                for n in returned_nodes:
-                    need_returning_nodes.remove(n)
-            continue
-        chosen_direction, _ = min(subtrees_depths.items(), key=itemgetter(1))
-        if len(subtrees_depths) == 1:
-            previous_node = maze.ball
-            maze.move_ball(chosen_direction)
-            print(f"{chosen_direction}, {maze.ball}, {maze.has_node_taken_all_available_directions(maze.ball)}\n{maze}")
-            visited_nodes.append(maze.ball)
-            finished_nodes.append(previous_node)
-            for n in need_returning_nodes:
-                if n[0] == previous_node:
-                    need_returning_nodes.remove(n)
-            if level == len(state_space_tree) - 1:
-                # print("need to return from here - reached the bottom of the tree")
-                if need_returning_nodes == []:
-                    continue
-                path_back = maze.get_shortest_route(maze.ball, need_returning_nodes[0][0])
-                # print(f"Return to {need_returning_nodes[0]}: {path_back}")
-                level = need_returning_nodes[0][1]
-                for d in path_back[1]:
-                    maze.move_ball(d)
-                    print(f"{d}, {maze.ball}, {maze.has_node_taken_all_available_directions(maze.ball)}\n{maze}")
-                    visited_nodes.append(maze.ball)
-                    returned_nodes = []
-                    for n in need_returning_nodes:
-                        if n[0] == maze.ball:
-                            returned_nodes.append(n)
-                    for n in returned_nodes:
-                        need_returning_nodes.remove(n)
-                continue
-            level += 1
-            continue
-        for d in subtrees_depths:
-            if d != chosen_direction:
-                other_direction = d
-                break
-        # TODO: check if it can be returned before adding it to the stack, if not - choose the other path
-        route = maze.get_shortest_route(getattr(maze.ball, chosen_direction), getattr(maze.ball, other_direction))
-        need_returning_nodes.append((getattr(maze.ball, other_direction), level + 1))
-        maze.move_ball(chosen_direction)
-        print(f"{chosen_direction}, {maze.ball}, {maze.has_node_taken_all_available_directions(maze.ball)}\n{maze}")
-        visited_nodes.append(maze.ball)
-        continue
-        if set(maze.nodes[current_position][1]) == set(maze.nodes[current_position][2] + not_needed_directions):
-            finished_nodes.append(previous_node)
-            level += 1
-            continue
-        break
-
-    print(f"{maze.is_solved}")
-    print(maze.moves_made)
-    print(maze)
+    # print(maze)
+    maze.walk_shallowest_subtree()
+    print(f"Solved {maze.is_solved}")
+    # print(f"Solved {maze.is_solved}\n{maze}")
 
 
 if __name__ == '__main__':
