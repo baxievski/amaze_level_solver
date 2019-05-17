@@ -8,8 +8,6 @@ from operator import itemgetter
 
 class Vertex:
     def __init__(self, y, x):
-        """
-        """
         self.y = y
         self.x = x
         self.left = None
@@ -18,31 +16,27 @@ class Vertex:
         self.down = None
 
     def __repr__(self):
-        dir_arrows = {
-            'left': '←',
-            'right': '→',
-            'up': '↑',
-            'down': '↓'
-        }
-        repr_edges = ''
-        for d in ('left', 'right', 'up', 'down'):
+        dir_arrows = {"left": "←", "right": "→", "up": "↑", "down": "↓"}
+        repr_edges = ""
+
+        for d in dir_arrows:
             if getattr(self, d) is not None:
                 repr_edges += dir_arrows[d]
-        return f'V({self.y}, {self.x})'
+
+        return f"V({self.y}, {self.x})"
 
 
 class Maze:
     # TODO: split into: Maze (maze generation and calculation of start position), Game (moves and everything remaining)
-    directions = {
-        'left': (0, -1),
-        'right': (0, 1),
-        'up': (-1, 0),
-        'down': (1, 0)
+    directions_offsets = {
+        "left": (0, -1),
+        "right": (0, 1),
+        "up": (-1, 0),
+        "down": (1, 0),
     }
+    free_spaces = ["1", "2", "3"]
 
     def __init__(self, amaze_level_path):
-        """
-        """
         with open(amaze_level_path) as f:
             level = f.read()
 
@@ -50,13 +44,13 @@ class Maze:
         etree_root = xml_etree.getroot()
 
         for etree_element in etree_root:
-            if etree_element.tag == 'layer':
-                width = int(etree_element.attrib['width'])
-                height = int(etree_element.attrib['height'])
-                data = etree_element.find('data').text
+            if etree_element.tag == "layer":
+                width = int(etree_element.attrib["width"])
+                height = int(etree_element.attrib["height"])
+                data = etree_element.find("data").text
 
-        layout = data.replace('\n', '').split(',')
-        self.layout = [layout[y * width : (y+1) * width] for y in range(height)]
+        layout = data.replace("\n", "").split(",")
+        self.layout = [layout[y * width : (y + 1) * width] for y in range(height)]
         self.reset_solved_state()
         self.vertices = {}
         self.moves_made = []
@@ -68,16 +62,18 @@ class Maze:
     def __repr__(self):
         rows = len(self.layout)
         columns = len(self.layout[0])
-        r_layout = '\n'.join(' '.join(x) for x in self.layout)
+        r_layout = "\n".join(" ".join(x) for x in self.layout)
         r_layout = r_layout.replace("0", "■")
-        r_layout = r_layout.replace("1", " ")
-        r_layout = r_layout.replace("2", " ")
+
+        for free_space in Maze.free_spaces:
+            r_layout = r_layout.replace(free_space, " ")
+
         r_solved_state = deepcopy(self.solved_state)
 
         if self.ball is not None:
             r_solved_state[self.ball.y][self.ball.x] = "x"
 
-        r_solved = '\n'.join(' '.join(x) for x in r_solved_state)
+        r_solved = "\n".join(" ".join(x) for x in r_solved_state)
         r_solved = r_solved.replace("1", "■")
         r_solved = r_solved.replace("9", "□")
         r_solved = r_solved.replace("x", "○")
@@ -91,12 +87,12 @@ class Maze:
             solved_row = []
 
             for element in row:
-                if element == '0':
-                    solved_row.append('1')
-                elif element in ('1', '2'):
-                    solved_row.append('0')
+                if element == "0":
+                    solved_row.append("1")
+                elif element in Maze.free_spaces:
+                    solved_row.append("0")
                 else:
-                    raise Exception(f'Illegal elemennt {element} in {row}.')
+                    raise Exception(f"Illegal element: {element} in {row}.")
 
             solved_state.append(solved_row)
 
@@ -106,14 +102,14 @@ class Maze:
     def start_position(self):
         for y, row in enumerate(self.layout):
             for x, element in enumerate(row):
-                if element in ('1', '2'):
+                if element in Maze.free_spaces:
                     return (y, x)
     
     @property
     def is_solved(self):
         for row in self.solved_state:
             for el in row:
-                if el == '0':
+                if el == "0":
                     return False
 
         return True
@@ -134,17 +130,17 @@ class Maze:
             possible_moves = self.possible_moves(self.start_position)
             self.vertices[self.start_position] = [self.ball, possible_moves, [], []]
 
-        self.solved_state[y_start][x_start] = '9'
+        self.solved_state[y_start][x_start] = "9"
     
     def possible_moves(self, position):
         moves = []
 
         y, x = position
 
-        for d in Maze.directions:
-            y_offset = Maze.directions[d][0]
-            x_offset = Maze.directions[d][1]
-            if self.layout[y + y_offset][x + x_offset] in ('1', '2'):
+        for d in Maze.directions_offsets:
+            y_offset = Maze.directions_offsets[d][0]
+            x_offset = Maze.directions_offsets[d][1]
+            if self.layout[y + y_offset][x + x_offset] in Maze.free_spaces:
                 if d not in moves:
                     moves.append(d)
 
@@ -153,7 +149,7 @@ class Maze:
     def move_ball(self, direction):
         """ go until the ball hits a wall """
         if direction not in self.possible_moves((self.ball.y, self.ball.x)):
-            raise Exception(f'Can not move {direction}!')
+            raise Exception(f"Can not move {direction}!")
 
         self.vertices[(self.ball.y, self.ball.x)][2].append(direction)
 
@@ -168,12 +164,12 @@ class Maze:
         previous_ball = self.ball
 
         while direction in self.possible_moves((self.ball.y, self.ball.x)):
-            y_offset = Maze.directions[direction][0]
-            x_offset = Maze.directions[direction][1]
+            y_offset = Maze.directions_offsets[direction][0]
+            x_offset = Maze.directions_offsets[direction][1]
             y_next = self.ball.y + y_offset
             x_next = self.ball.x + x_offset
             new_ball = Vertex(y_next, x_next)
-            self.solved_state[y_next][x_next] = '9'
+            self.solved_state[y_next][x_next] = "9"
             self.ball = new_ball
 
         if (y_next, x_next) in self.vertices:
@@ -240,8 +236,14 @@ class Maze:
                     if vertex in visited_vertices:
                         continue
 
-                    vertices_on_level += [prev_vertices + [getattr(vertex, direction), ] for direction in self.vertices[(vertex.y, vertex.x)][1]]
-                    moves_on_level += [previous_moves + [direction, ] for direction in self.vertices[(vertex.y, vertex.x)][1]]
+                    vertices_on_level += [
+                        prev_vertices + [getattr(vertex, direction)]
+                        for direction in self.vertices[(vertex.y, vertex.x)][1]
+                    ]
+                    moves_on_level += [
+                        previous_moves + [direction]
+                        for direction in self.vertices[(vertex.y, vertex.x)][1]
+                    ]
                     visited_vertices.append(vertex)
 
                 level += 1
@@ -255,7 +257,7 @@ class Maze:
                 if level not in move_tree:
                     move_tree[level] = []
 
-                spanning_tree[level] += (vertices_on_level)
+                spanning_tree[level] += vertices_on_level
                 move_tree[level] += moves_on_level
 
             spanning_trees[pos] = spanning_tree
@@ -284,7 +286,7 @@ class Maze:
                 break
 
         for d in self.vertices[(vertex.y, vertex.x)][1]:
-            cur_subseq = n_subsequence + [getattr(vertex, d), ]
+            cur_subseq = n_subsequence + [getattr(vertex, d)]
             max_depth[d] = self.level
 
             for i, s in enumerate(self.spanning_trees[self.start_position]):
@@ -292,7 +294,7 @@ class Maze:
                     continue
 
                 for j, ss in enumerate(self.spanning_trees[self.start_position][i]):
-                    if ss[:len(cur_subseq)] == cur_subseq:
+                    if ss[: len(cur_subseq)] == cur_subseq:
                         max_depth[d] = i
                         continue
 
@@ -306,7 +308,7 @@ class Maze:
                 if vertex in v:
                     return level
 
-    def dfs_return_to_vertex(self, vertex, level):
+    def return_to_vertex(self, vertex, level):
         route_back = self.get_shortest_route(self.ball, vertex)
 
         if route_back is None:
@@ -315,7 +317,7 @@ class Maze:
 
         for direction in route_back[1]:
             if self.is_solved:
-                return self.depth_first_search()
+                return self.depth_first_walk()
 
             self.move_ball(direction)
 
@@ -325,9 +327,10 @@ class Maze:
         if self.log:
             print(f"-> {self.ball} on level {self.level}")
 
-        return self.depth_first_search()
+        return self.depth_first_walk()
 
-    def dfs_backtrack(self):
+    def backtrack(self):
+        # TODO: check if backtracking and walking will make a difference
         vertex = self.vertices_to_return_to[-1][0]
         level = self.vertices_to_return_to[-1][1]
 
@@ -336,11 +339,11 @@ class Maze:
 
         if set(v_possible_moves) == set(v_moves_made):
             self.vertices_to_return_to = self.vertices_to_return_to[:-1]
-            return self.depth_first_search()
+            return self.depth_first_walk()
 
-        return self.dfs_return_to_vertex(vertex, level)
+        return self.return_to_vertex(vertex, level)
 
-    def depth_first_search(self):
+    def depth_first_walk(self):
         if self.log:
             print(f"is solved {self.is_solved}\n{self}")
 
@@ -351,7 +354,7 @@ class Maze:
 
         if self.level == subtree_depth:
             if self.vertices_to_return_to not in ([], None):
-                return self.dfs_backtrack()
+                return self.backtrack()
 
             if self.log:
                 print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
@@ -368,9 +371,9 @@ class Maze:
             depth_of_remaining_directions[direction] = depth
 
         if depth_of_remaining_directions == {}:
-            # this is the end of the subtreee, the same vertex appeared more than once on the same level. Just track back...
+            # End of subtreee. Vertex appeared more than once on this level. Track back
             if self.vertices_to_return_to not in ([], None):
-                return self.dfs_backtrack()
+                return self.backtrack()
 
             if self.log:
                 print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
@@ -391,12 +394,13 @@ class Maze:
         self.move_ball(chosen_direction)
         self.level += 1
 
-        return self.depth_first_search()
+        return self.depth_first_walk()
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Utility for solving AMAZE levels')
-    parser.add_argument("--level", help='Path to the AMAZE level xml file', required=True)
-    parser.add_argument("--log", help='Extra printing', default=False, required=False)
+    parser = argparse.ArgumentParser(description="Utility for solving AMAZE levels")
+    parser.add_argument("--level", help="Path to AMAZE level xml file", required=True)
+    parser.add_argument("--log", help="Extra printing", default=False, required=False)
 
     args, _ = parser.parse_known_args()
 
@@ -411,10 +415,10 @@ def main():
         maze.log = True
 
     maze.create_spanning_trees()
-    maze.depth_first_search()
+    maze.depth_first_walk()
 
     print(f"Solved {maze.is_solved} in {len(maze.moves_made)} moves")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
