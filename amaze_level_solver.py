@@ -2,10 +2,11 @@ import argparse
 import os
 import random
 import xml.etree.ElementTree as ET  
+from copy import deepcopy
 from operator import itemgetter
 
 
-class Node:
+class Vertex:
     def __init__(self, y, x):
         """
         """
@@ -31,7 +32,7 @@ class Node:
 
 
 class Maze:
-    # TODO: split into 2 classes: Maze (only maze generation and calculation of start position), Game - (moves and everything remaining)
+    # TODO: split into: Maze (maze generation and calculation of start position), Game (moves and everything remaining)
     directions = {
         'left': (0, -1),
         'right': (0, 1),
@@ -44,38 +45,51 @@ class Maze:
         """
         with open(amaze_level_path) as f:
             level = f.read()
-        tree = ET.ElementTree(ET.fromstring(level))
-        root = tree.getroot()
-        for elem in root:
-            if elem.tag == 'layer':
-                width = int(elem.attrib['width'])
-                height = int(elem.attrib['height'])
-                data = elem.find('data').text
-        _d = data.replace('\n', '').split(',')
-        self.layout = [_d[y * width : (y+1) * width] for y in range(height)]
+
+        xml_etree = ET.ElementTree(ET.fromstring(level))
+        etree_root = xml_etree.getroot()
+
+        for etree_element in etree_root:
+            if etree_element.tag == 'layer':
+                width = int(etree_element.attrib['width'])
+                height = int(etree_element.attrib['height'])
+                data = etree_element.find('data').text
+
+        layout = data.replace('\n', '').split(',')
+        self.layout = [layout[y * width : (y+1) * width] for y in range(height)]
         self.reset_solved_state()
-        self.nodes = {}
+        self.vertices = {}
         self.moves_made = []
-        self.done_nodes = []
-        self.nodes_to_return_to = []
+        self.explored_verticess = []
+        self.vertices_to_return_to = []
         self.level = 0
         self.log = False
 
     def __repr__(self):
+        rows = len(self.layout)
+        columns = len(self.layout[0])
         r_layout = '\n'.join(' '.join(x) for x in self.layout)
         r_layout = r_layout.replace("0", "■")
         r_layout = r_layout.replace("1", " ")
         r_layout = r_layout.replace("2", " ")
-        r_solved = '\n'.join(' '.join(x) for x in self.solved_state)
+        r_solved_state = deepcopy(self.solved_state)
+
+        if self.ball is not None:
+            r_solved_state[self.ball.y][self.ball.x] = "x"
+
+        r_solved = '\n'.join(' '.join(x) for x in r_solved_state)
         r_solved = r_solved.replace("1", "■")
         r_solved = r_solved.replace("9", "□")
+        r_solved = r_solved.replace("x", "○")
         r_solved = r_solved.replace("0", " ")
         return f"{r_solved}"
 
     def reset_solved_state(self):
         solved_state = []
+
         for row in self.layout:
             solved_row = []
+
             for element in row:
                 if element == '0':
                     solved_row.append('1')
@@ -83,7 +97,9 @@ class Maze:
                     solved_row.append('0')
                 else:
                     raise Exception(f'Illegal elemennt {element} in {row}.')
+
             solved_state.append(solved_row)
+
         self.solved_state = solved_state
 
     @property
@@ -92,7 +108,6 @@ class Maze:
             for x, element in enumerate(row):
                 if element in ('1', '2'):
                     return (y, x)
-        pass
     
     @property
     def is_solved(self):
@@ -100,259 +115,305 @@ class Maze:
             for el in row:
                 if el == '0':
                     return False
+
         return True
     
     def start(self):
         if self.start_position is None:
             raise Exception("Can not place ball on level")
-        self.done_nodes = []
+
+        self.explored_verticess = []
+
         y_start = self.start_position[0]
         x_start = self.start_position[1]
-        if self.start_position in self.nodes:
-            self.ball = self.nodes[self.start_position][0]
+
+        if self.start_position in self.vertices:
+            self.ball = self.vertices[self.start_position][0]
         else:
-            self.ball = Node(y_start, x_start)
-            self.nodes[self.start_position] = [self.ball, self.possible_moves(self.start_position), []]
+            self.ball = Vertex(y_start, x_start)
+            possible_moves = self.possible_moves(self.start_position)
+            self.vertices[self.start_position] = [self.ball, possible_moves, [], []]
+
         self.solved_state[y_start][x_start] = '9'
     
     def possible_moves(self, position):
         moves = []
+
         y, x = position
+
         for d in Maze.directions:
             y_offset = Maze.directions[d][0]
             x_offset = Maze.directions[d][1]
             if self.layout[y + y_offset][x + x_offset] in ('1', '2'):
                 if d not in moves:
                     moves.append(d)
+
         return moves
 
     def move_ball(self, direction):
         """ go until the ball hits a wall """
         if direction not in self.possible_moves((self.ball.y, self.ball.x)):
             raise Exception(f'Can not move {direction}!')
-        self.nodes[(self.ball.y, self.ball.x)][2].append(direction)
-        if set(self.nodes[(self.ball.y, self.ball.x)][1]) == set(self.nodes[(self.ball.y, self.ball.x)][2]):
-            self.done_nodes.append(self.ball)
+
+        self.vertices[(self.ball.y, self.ball.x)][2].append(direction)
+
+        possible_moves = self.vertices[(self.ball.y, self.ball.x)][1]
+        made_moves = self.vertices[(self.ball.y, self.ball.x)][2]
+
+        if set(possible_moves) == set(made_moves):
+            self.explored_verticess.append(self.ball)
+
         self.moves_made.append(direction)
+
         previous_ball = self.ball
+
         while direction in self.possible_moves((self.ball.y, self.ball.x)):
             y_offset = Maze.directions[direction][0]
             x_offset = Maze.directions[direction][1]
             y_next = self.ball.y + y_offset
             x_next = self.ball.x + x_offset
-            new_ball = Node(y_next, x_next)
+            new_ball = Vertex(y_next, x_next)
             self.solved_state[y_next][x_next] = '9'
             self.ball = new_ball
-        if (y_next, x_next) in self.nodes:
-            self.ball = self.nodes[(y_next, x_next)][0]
+
+        if (y_next, x_next) in self.vertices:
+            self.ball = self.vertices[(y_next, x_next)][0]
         else:
-            self.nodes[(y_next, x_next)] = [self.ball, self.possible_moves((y_next, x_next)), []]
+            available_moves = self.possible_moves((y_next, x_next))
+            self.vertices[(y_next, x_next)] = [self.ball, available_moves, [], []]
+
         setattr(previous_ball, direction, self.ball)
 
     def reset_moves_made(self):
         self.moves_made = []
-        for pos in self.nodes:
-            self.nodes[pos][2] = []
+
+        for pos in self.vertices:
+            self.vertices[pos][2] = []
+            self.vertices[pos][3] = []
     
-    def visit_all_adjacent_nodes(self, node=None):
-        if node is None:
-            node = self.ball
-        possible_moves = self.possible_moves((node.y, node.x))
+    def visit_all_adjacent_vertices(self, vertex=None):
+        if vertex is None:
+            vertex = self.ball
+
+        possible_moves = self.possible_moves((vertex.y, vertex.x))
+
         for direction in possible_moves:
-            self.ball = node
-            if direction in self.nodes[(node.y, node.x)][2]:
+            self.ball = vertex
+
+            if direction in self.vertices[(vertex.y, vertex.x)][2]:
                 continue
+
             self.move_ball(direction)
-            self.visit_all_adjacent_nodes(self.ball)
+            self.visit_all_adjacent_vertices(self.ball)
 
     def create_graph(self):
         self.start()
-        self.visit_all_adjacent_nodes()
-        # print(f"----------------\n{self}\nis maze solved: {self.is_solved}\n----------------")
-        # [ ] TODO think if it is possible to get solvability of maze just by looking at
-        #          self.is_solved at this point
-        #          maybe some node cannot be returned to after moving away from it
-        #          if it is not solvable at this point - it will not be solvable "regularly"
+        self.visit_all_adjacent_vertices()
+        # TODO if it is not solved at this point - it will not be solvable "regularly"
         self.reset_solved_state()
         self.reset_moves_made()
         self.start()
     
-    def create_state_space_trees(self):
+    def create_spanning_trees(self):
         self.create_graph()
-        state_space_trees = {}
+
+        spanning_trees = {}
         move_trees = {}
-        for pos in self.nodes.keys():
+
+        for pos in self.vertices.keys():
             level = 0
-            state_space_tree = {}
+            spanning_tree = {}
             move_tree = {}
-            state_space_tree = {level: [[self.nodes[pos][0]]]}
+            spanning_tree = {level: [[self.vertices[pos][0]]]}
             move_tree = {level: [[]]}
-            passed_nodes = []
-            all_nodes = set([self.nodes[pos][0] for pos in self.nodes.keys()])
-            while set(passed_nodes) != all_nodes:
-                nodes_on_level = []
+            visited_vertices = []
+            all_vertices = set([self.vertices[pos][0] for pos in self.vertices.keys()])
+
+            while set(visited_vertices) != all_vertices:
+                vertices_on_level = []
                 moves_on_level = []
-                for i, previous_nodes in enumerate(state_space_tree[level]):
-                    node = previous_nodes[-1]
+
+                for i, prev_vertices in enumerate(spanning_tree[level]):
+                    vertex = prev_vertices[-1]
                     previous_moves = move_tree[level][i]
-                    if node in passed_nodes:
+
+                    if vertex in visited_vertices:
                         continue
-                    nodes_on_level += [previous_nodes + [getattr(node, direction), ] for direction in self.nodes[(node.y, node.x)][1]]
-                    moves_on_level += [previous_moves + [direction, ] for direction in self.nodes[(node.y, node.x)][1]]
-                    passed_nodes.append(node)
+
+                    vertices_on_level += [prev_vertices + [getattr(vertex, direction), ] for direction in self.vertices[(vertex.y, vertex.x)][1]]
+                    moves_on_level += [previous_moves + [direction, ] for direction in self.vertices[(vertex.y, vertex.x)][1]]
+                    visited_vertices.append(vertex)
+
                 level += 1
-                if nodes_on_level == []:
+
+                if vertices_on_level == []:
                     break
-                if level not in state_space_tree:
-                    state_space_tree[level] = []
+
+                if level not in spanning_tree:
+                    spanning_tree[level] = []
+
                 if level not in move_tree:
                     move_tree[level] = []
-                state_space_tree[level] += (nodes_on_level)
+
+                spanning_tree[level] += (vertices_on_level)
                 move_tree[level] += moves_on_level
-            state_space_trees[pos] = state_space_tree
+
+            spanning_trees[pos] = spanning_tree
             move_trees[pos] = move_tree
-        self.state_space_trees = state_space_trees
+
+        self.spanning_trees = spanning_trees
         self.move_trees = move_trees
     
-    def has_node_taken_all_available_directions(self, node):
-        return set(self.nodes[(node.y, node.x)][1]) == set(self.nodes[(node.y, node.x)][2])
-
-    def get_shortest_route(self, start_node, end_node):
-        for level, vertices_on_level in self.state_space_trees[(start_node.y, start_node.x)].items():
+    def get_shortest_route(self, start, end):
+        for level, vertices_on_level in self.spanning_trees[(start.y, start.x)].items():
             for i, vertex in enumerate(vertices_on_level):
-                if end_node in vertex:
-                    return (vertex, self.move_trees[(start_node.y, start_node.x)][level][i])
+                if end in vertex:
+                    moves = self.move_trees[(start.y, start.x)][level][i]
+                    return (vertex, moves)
+
         return None
     
-    def get_depth_for_subtree(self, node, level):
+    def subtree_depths(self, vertex):
         # TODO: see about using self.level instead of level
         max_depth = {}
         n_subsequence = []
-        for i, s in enumerate(self.state_space_trees[self.start_position][level]):
-            if node in s:
+
+        for i, s in enumerate(self.spanning_trees[self.start_position][self.level]):
+            if vertex in s:
                 n_subsequence = s
                 break
-        for d in self.nodes[(node.y, node.x)][1]:
-            cur_subseq = n_subsequence + [getattr(node, d), ]
-            max_depth[d] = level
-            for i, s in enumerate(self.state_space_trees[self.start_position]):
-                if i <= level:
+
+        for d in self.vertices[(vertex.y, vertex.x)][1]:
+            cur_subseq = n_subsequence + [getattr(vertex, d), ]
+            max_depth[d] = self.level
+
+            for i, s in enumerate(self.spanning_trees[self.start_position]):
+                if i <= self.level:
                     continue
-                for j, ss in enumerate(self.state_space_trees[self.start_position][i]):
+
+                for j, ss in enumerate(self.spanning_trees[self.start_position][i]):
                     if ss[:len(cur_subseq)] == cur_subseq:
                         max_depth[d] = i
                         continue
+
         return max_depth
 
-    def return_to_node(self, node, level):
-        route_back = self.get_shortest_route(self.ball, node)
+    def get_lowest_level_of_vertex(self, vertex):
+        spanning_tree = self.spanning_trees[self.start_position]
+
+        for level, vertices in spanning_tree.items():
+            for v in vertices:
+                if vertex in v:
+                    return level
+
+    def dfs_return_to_vertex(self, vertex, level):
+        route_back = self.get_shortest_route(self.ball, vertex)
+
         if route_back is None:
-            print(f"No route from {self.ball} to {node}")
-            # FIXME: doesn't make sense
+            print(f"No route from {self.ball} to {vertex}")
             return None
+
         for direction in route_back[1]:
             if self.is_solved:
-                return self.walk_shallowest_subtree()
+                return self.depth_first_search()
+
             self.move_ball(direction)
+
         self.level = level
-        # TODO: check if there are more than 1 available direction
-        self.nodes_to_return_to = self.nodes_to_return_to[:-1]
+        self.vertices_to_return_to = self.vertices_to_return_to[:-1]
+
         if self.log:
             print(f"-> {self.ball} on level {self.level}")
-        return self.walk_shallowest_subtree()
-    
-    def get_lowest_level_of_node(self, node):
-        sst = self.state_space_trees[self.start_position]
-        for l, nodes in sst.items():
-            for n in nodes:
-                if node in n:
-                    return l
 
-    def walk_shallowest_subtree(self):
+        return self.depth_first_search()
+
+    def dfs_backtrack(self):
+        vertex = self.vertices_to_return_to[-1][0]
+        level = self.vertices_to_return_to[-1][1]
+
+        v_possible_moves = self.vertices[(vertex.y, vertex.x)][1]
+        v_moves_made = self.vertices[(vertex.y, vertex.x)][3]
+
+        if set(v_possible_moves) == set(v_moves_made):
+            self.vertices_to_return_to = self.vertices_to_return_to[:-1]
+            return self.depth_first_search()
+
+        return self.dfs_return_to_vertex(vertex, level)
+
+    def depth_first_search(self):
         if self.log:
             print(f"is solved {self.is_solved}\n{self}")
-        depth_of_current_subtree = max(self.get_depth_for_subtree(self.ball, self.level).items(), key=itemgetter(1))[1]
+
         if self.is_solved:
             return
-        if self.level == depth_of_current_subtree - 1:
-            possible_directions = self.nodes[(self.ball.y, self.ball.x)][1]
-            possible_next_nodes = [getattr(self.ball, d) for d in possible_directions]
-            l = self.level
-            chosen_direction = None
-            for d, n in zip(possible_directions, possible_next_nodes):
-                if self.get_lowest_level_of_node(n) <= l+1:
-                    l = self.get_lowest_level_of_node(n)
-                    chosen_direction = d
+
+        subtree_depth = max(self.subtree_depths(self.ball).items(), key=itemgetter(1))[1]
+
+        if self.level == subtree_depth:
+            if self.vertices_to_return_to not in ([], None):
+                return self.dfs_backtrack()
+
             if self.log:
-                print(f"Solved: {self.is_solved} - at {self.ball} on level {self.level} - taking {chosen_direction} to {getattr(self.ball, chosen_direction)}")
-            self.move_ball(chosen_direction)
-            self.level += 1
-            return self.walk_shallowest_subtree()
-        if self.level >= depth_of_current_subtree - 1:
-            if self.nodes_to_return_to not in ([], None):
-                node_to_return_to = self.nodes_to_return_to[-1][0]
-                level_to_return_to = self.nodes_to_return_to[-1][1]
-                return self.return_to_node(node_to_return_to, level_to_return_to)
-            if self.log:
-                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.nodes[(self.ball.y, self.ball.x)]}")
-            all_nodes = set(self.nodes[n][0] for n in self.nodes)
-            done_nodes = set(self.done_nodes)
-            if self.ball not in done_nodes:
-                if self.log:
-                    print(f"Current node done: {self.ball in done_nodes}\nRemaining nodes: {all_nodes - done_nodes}")
-                    # TODO: check if a move takes us straight to a node that is not in done_nodes
+                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+
             return
-        directions_taken = self.nodes[(self.ball.y, self.ball.x)][2]
-        directions_to_nodes_that_need_returning_to = []
-        for d in self.nodes[(self.ball.y, self.ball.x)][1]:
-            for n in self.nodes_to_return_to:
-                if n[0] == getattr(self.ball, d):
-                    directions_to_nodes_that_need_returning_to.append(d)
-        directions_to_done_nodes = []
-        for d in self.nodes[(self.ball.y, self.ball.x)][1]:
-            for n in self.done_nodes:
-                if n == getattr(self.ball, d):
-                    directions_to_done_nodes.append(d)
+
+        directions_taken = self.vertices[(self.ball.y, self.ball.x)][3]
         depth_of_remaining_directions = {}
-        for direction, depth in self.get_depth_for_subtree(self.ball, self.level).items():
+
+        for direction, depth in self.subtree_depths(self.ball).items():
             if direction in directions_taken:
                 continue
-            if direction in directions_to_done_nodes:
-                continue
-            if direction in directions_to_nodes_that_need_returning_to:
-                continue
+
             depth_of_remaining_directions[direction] = depth
-        chosen_direction, _ = min(depth_of_remaining_directions.items(), key=itemgetter(1))
+
+        if depth_of_remaining_directions == {}:
+            # this is the end of the subtreee, the same vertex appeared more than once on the same level. Just track back...
+            if self.vertices_to_return_to not in ([], None):
+                return self.dfs_backtrack()
+
+            if self.log:
+                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+
+            return
+
+        chosen_direction, _ = max(depth_of_remaining_directions.items(), key=itemgetter(1))
+
         if len(depth_of_remaining_directions) > 1:
-            self.nodes_to_return_to.append((self.ball, self.level))
+            self.vertices_to_return_to.append((self.ball, self.level))
         else:
-            self.done_nodes.append(self.ball)
+            self.explored_verticess.append(self.ball)
+
         if self.log:
             print(f"Solved: {self.is_solved} - at {self.ball} on level {self.level} - taking {chosen_direction} to {getattr(self.ball, chosen_direction)}")
+
+        self.vertices[(self.ball.y, self.ball.x)][3].append(chosen_direction)
         self.move_ball(chosen_direction)
         self.level += 1
-        return self.walk_shallowest_subtree()
 
+        return self.depth_first_search()
 
 def main():
-    # TODO: note limitation in README.md - valid ball positions are only vertices - otherwise the whole thing crumbles down
     parser = argparse.ArgumentParser(description='Utility for solving AMAZE levels')
     parser.add_argument("--level", help='Path to the AMAZE level xml file', required=True)
-    parser.add_argument("--log", help='Enable extra printing', default=False, required=False)
+    parser.add_argument("--log", help='Extra printing', default=False, required=False)
+
     args, _ = parser.parse_known_args()
+
     amaze_level_path = os.path.abspath(args.level)
 
     if not os.path.isfile(amaze_level_path):
         raise Exception(f"File {amaze_level_path} not found")
 
     maze = Maze(amaze_level_path)
+
     if args.log:
         maze.log = True
-    maze.create_state_space_trees()
-    # print(maze)
-    maze.walk_shallowest_subtree()
-    print(f"Solved {maze.is_solved}")
-    # print(f"Solved {maze.is_solved}\n{maze}")
+
+    maze.create_spanning_trees()
+    maze.depth_first_search()
+
+    print(f"Solved {maze.is_solved} in {len(maze.moves_made)} moves")
 
 
 if __name__ == '__main__':
