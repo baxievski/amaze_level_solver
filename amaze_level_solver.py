@@ -1,9 +1,10 @@
 import argparse
-import os
-import random
 import xml.etree.ElementTree as ET  
 from copy import deepcopy
+from functools import lru_cache
 from operator import itemgetter
+from time import time
+from pathlib import Path
 
 
 class Vertex:
@@ -58,6 +59,7 @@ class Maze:
         self.vertices_to_return_to = []
         self.level = 0
         self.log = False
+        self.self_before_backtrack = None
 
     def __repr__(self):
         rows = len(self.layout)
@@ -76,7 +78,7 @@ class Maze:
         r_solved = "\n".join(" ".join(x) for x in r_solved_state)
         r_solved = r_solved.replace("1", "■")
         r_solved = r_solved.replace("9", "□")
-        r_solved = r_solved.replace("x", "○")
+        r_solved = r_solved.replace("x", "◍")
         r_solved = r_solved.replace("0", " ")
         return f"{r_solved}"
 
@@ -276,12 +278,11 @@ class Maze:
         return None
     
     def subtree_depths(self, vertex):
-        # TODO: see about using self.level instead of level
         max_depth = {}
         n_subsequence = []
 
         for i, s in enumerate(self.spanning_trees[self.start_position][self.level]):
-            if vertex in s:
+            if vertex == s[-1]:
                 n_subsequence = s
                 break
 
@@ -322,7 +323,12 @@ class Maze:
             self.move_ball(direction)
 
         self.level = level
-        self.vertices_to_return_to = self.vertices_to_return_to[:-1]
+
+        v_possible_moves = self.vertices[(vertex.y, vertex.x)][1]
+        v_moves_made = self.vertices[(vertex.y, vertex.x)][3]
+
+        if set(v_possible_moves) == set(v_moves_made):
+            self.vertices_to_return_to = self.vertices_to_return_to[:-1]
 
         if self.log:
             print(f"-> {self.ball} on level {self.level}")
@@ -330,7 +336,9 @@ class Maze:
         return self.depth_first_walk()
 
     def backtrack(self):
-        # TODO: check if backtracking and walking will make a difference
+        if self.vertices_to_return_to in [None, []]:
+            return self.depth_first_walk()
+
         vertex = self.vertices_to_return_to[-1][0]
         level = self.vertices_to_return_to[-1][1]
 
@@ -353,13 +361,30 @@ class Maze:
         subtree_depth = max(self.subtree_depths(self.ball).items(), key=itemgetter(1))[1]
 
         if self.level == subtree_depth:
-            if self.vertices_to_return_to not in ([], None):
-                return self.backtrack()
+            if self.vertices_to_return_to in ([], None):
+                if self.log:
+                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
 
-            if self.log:
-                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+                return
 
-            return
+            # if self.self_before_backtrack is None:
+            #     self.self_before_backtrack = deepcopy(self)
+            # elif self.solved_state == self.self_before_backtrack.solved_state:
+            #     if self.log:
+            #         print(f"useless backtrack\n{self}")
+
+            #     self.ball = deepcopy(self.self_before_backtrack.ball)
+            #     self.level = self.self_before_backtrack.level
+            #     self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
+            #     self.self_before_backtrack = None
+            #     self.self_before_backtrack = deepcopy(self)
+
+            #     return self.backtrack()
+
+            # self.self_before_backtrack = None
+            # self.self_before_backtrack = deepcopy(self)
+
+            return self.backtrack()
 
         directions_taken = self.vertices[(self.ball.y, self.ball.x)][3]
         depth_of_remaining_directions = {}
@@ -371,14 +396,31 @@ class Maze:
             depth_of_remaining_directions[direction] = depth
 
         if depth_of_remaining_directions == {}:
-            # End of subtreee. Vertex appeared more than once on this level. Track back
-            if self.vertices_to_return_to not in ([], None):
-                return self.backtrack()
+            # End of subtreee. Vertex appeared more than once on this level. Backtrack
+            if self.vertices_to_return_to in ([], None):
+                if self.log:
+                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
 
-            if self.log:
-                print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+                return
 
-            return
+            # if self.self_before_backtrack is None:
+            #     self.self_before_backtrack = deepcopy(self)
+            # elif self.solved_state == self.self_before_backtrack.solved_state:
+            #     if self.log:
+            #         print(f"useless backtrack\n{self}")
+
+            #     self.ball = deepcopy(self.self_before_backtrack.ball)
+            #     self.level = self.self_before_backtrack.level
+            #     self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
+            #     self.self_before_backtrack = None
+            #     self.self_before_backtrack = deepcopy(self)
+
+            #     return self.backtrack()
+
+            # self.self_before_backtrack = None
+            # self.self_before_backtrack = deepcopy(self)
+
+            return self.backtrack()
 
         chosen_direction, _ = max(depth_of_remaining_directions.items(), key=itemgetter(1))
 
@@ -399,25 +441,39 @@ class Maze:
 
 def main():
     parser = argparse.ArgumentParser(description="Utility for solving AMAZE levels")
-    parser.add_argument("--level", help="Path to AMAZE level xml file", required=True)
+    parser.add_argument("--level", help="Path to AMAZE level xml file", required=False)
+    parser.add_argument("--alllevels", help="Path to dir containing AMAZE level xml files", required=False)
     parser.add_argument("--log", help="Extra printing", default=False, required=False)
 
     args, _ = parser.parse_known_args()
 
-    amaze_level_path = os.path.abspath(args.level)
+    amaze_levels_paths = []
 
-    if not os.path.isfile(amaze_level_path):
-        raise Exception(f"File {amaze_level_path} not found")
+    if args.alllevels is not None:
+        amaze_levels_paths = list(Path(args.alllevels).glob('*.xml'))
+    
+    if args.level is not None:
+        amaze_levels_paths.append(Path(args.level))
+    
+    amaze_levels_paths = sorted(amaze_levels_paths)
 
-    maze = Maze(amaze_level_path)
+    for amaze_level_path in amaze_levels_paths:
+        time_start = time()
 
-    if args.log:
-        maze.log = True
+        if not amaze_level_path.is_file():
+            raise Exception(f"File {amaze_level_path} not found")
 
-    maze.create_spanning_trees()
-    maze.depth_first_walk()
+        maze = Maze(amaze_level_path)
 
-    print(f"Solved {maze.is_solved} in {len(maze.moves_made)} moves")
+        if args.log:
+            maze.log = True
+
+        maze.create_spanning_trees()
+        maze.depth_first_walk()
+
+        time_end = time()
+
+        print(f"{amaze_level_path.name} {(time_end - time_start):.1f}sec: {'solved' if maze.is_solved else 'no solution found'} in {len(maze.moves_made)} moves")
 
 
 if __name__ == "__main__":
