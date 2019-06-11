@@ -1,7 +1,6 @@
 import argparse
 import xml.etree.ElementTree as ET  
 from copy import deepcopy
-from functools import lru_cache
 from operator import itemgetter
 from time import time
 from pathlib import Path
@@ -25,6 +24,16 @@ class Vertex:
                 repr_edges += dir_arrows[d]
 
         return f"V({self.y}, {self.x})"
+    
+    @property
+    def pos(self):
+        return (self.y, self.x)
+
+    def __eq__(self, other):
+        return isinstance(self, type(other)) and self.pos == other.pos
+
+    def __hash__(self):
+        return hash(self.pos)
 
 
 class Maze:
@@ -150,13 +159,13 @@ class Maze:
 
     def move_ball(self, direction):
         """ go until the ball hits a wall """
-        if direction not in self.possible_moves((self.ball.y, self.ball.x)):
+        if direction not in self.possible_moves(self.ball.pos):
             raise Exception(f"Can not move {direction}!")
 
-        self.vertices[(self.ball.y, self.ball.x)][2].append(direction)
+        self.vertices[self.ball.pos][2].append(direction)
 
-        possible_moves = self.vertices[(self.ball.y, self.ball.x)][1]
-        made_moves = self.vertices[(self.ball.y, self.ball.x)][2]
+        possible_moves = self.vertices[self.ball.pos][1]
+        made_moves = self.vertices[self.ball.pos][2]
 
         if set(possible_moves) == set(made_moves):
             self.explored_verticess.append(self.ball)
@@ -165,7 +174,7 @@ class Maze:
 
         previous_ball = self.ball
 
-        while direction in self.possible_moves((self.ball.y, self.ball.x)):
+        while direction in self.possible_moves(self.ball.pos):
             y_offset = Maze.directions_offsets[direction][0]
             x_offset = Maze.directions_offsets[direction][1]
             y_next = self.ball.y + y_offset
@@ -193,12 +202,12 @@ class Maze:
         if vertex is None:
             vertex = self.ball
 
-        possible_moves = self.possible_moves((vertex.y, vertex.x))
+        possible_moves = self.possible_moves(vertex.pos)
 
         for direction in possible_moves:
             self.ball = vertex
 
-            if direction in self.vertices[(vertex.y, vertex.x)][2]:
+            if direction in self.vertices[vertex.pos][2]:
                 continue
 
             self.move_ball(direction)
@@ -240,11 +249,11 @@ class Maze:
 
                     vertices_on_level += [
                         prev_vertices + [getattr(vertex, direction)]
-                        for direction in self.vertices[(vertex.y, vertex.x)][1]
+                        for direction in self.vertices[vertex.pos][1]
                     ]
                     moves_on_level += [
                         previous_moves + [direction]
-                        for direction in self.vertices[(vertex.y, vertex.x)][1]
+                        for direction in self.vertices[vertex.pos][1]
                     ]
                     visited_vertices.append(vertex)
 
@@ -269,10 +278,10 @@ class Maze:
         self.move_trees = move_trees
     
     def get_shortest_route(self, start, end):
-        for level, vertices_on_level in self.spanning_trees[(start.y, start.x)].items():
+        for level, vertices_on_level in self.spanning_trees[start.pos].items():
             for i, vertex in enumerate(vertices_on_level):
                 if end in vertex:
-                    moves = self.move_trees[(start.y, start.x)][level][i]
+                    moves = self.move_trees[start.pos][level][i]
                     return (vertex, moves)
 
         return None
@@ -286,7 +295,7 @@ class Maze:
                 n_subsequence = s
                 break
 
-        for d in self.vertices[(vertex.y, vertex.x)][1]:
+        for d in self.vertices[vertex.pos][1]:
             cur_subseq = n_subsequence + [getattr(vertex, d)]
             max_depth[d] = self.level
 
@@ -324,8 +333,8 @@ class Maze:
 
         self.level = level
 
-        v_possible_moves = self.vertices[(vertex.y, vertex.x)][1]
-        v_moves_made = self.vertices[(vertex.y, vertex.x)][3]
+        v_possible_moves = self.vertices[vertex.pos][1]
+        v_moves_made = self.vertices[vertex.pos][3]
 
         if set(v_possible_moves) == set(v_moves_made):
             self.vertices_to_return_to = self.vertices_to_return_to[:-1]
@@ -342,8 +351,8 @@ class Maze:
         vertex = self.vertices_to_return_to[-1][0]
         level = self.vertices_to_return_to[-1][1]
 
-        v_possible_moves = self.vertices[(vertex.y, vertex.x)][1]
-        v_moves_made = self.vertices[(vertex.y, vertex.x)][3]
+        v_possible_moves = self.vertices[vertex.pos][1]
+        v_moves_made = self.vertices[vertex.pos][3]
 
         if set(v_possible_moves) == set(v_moves_made):
             self.vertices_to_return_to = self.vertices_to_return_to[:-1]
@@ -363,30 +372,35 @@ class Maze:
         if self.level == subtree_depth:
             if self.vertices_to_return_to in ([], None):
                 if self.log:
-                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[self.ball.pos]}")
 
                 return
 
-            # if self.self_before_backtrack is None:
-            #     self.self_before_backtrack = deepcopy(self)
-            # elif self.solved_state == self.self_before_backtrack.solved_state:
-            #     if self.log:
-            #         print(f"useless backtrack\n{self}")
+            if self.self_before_backtrack is None:
+                self.self_before_backtrack = deepcopy(self)
+            elif self.solved_state == self.self_before_backtrack.solved_state:
+                if self.log:
+                    print(f"useless backtrack\n{self}")
 
-            #     self.ball = deepcopy(self.self_before_backtrack.ball)
-            #     self.level = self.self_before_backtrack.level
-            #     self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
-            #     self.self_before_backtrack = None
-            #     self.self_before_backtrack = deepcopy(self)
+                self.ball = deepcopy(self.self_before_backtrack.ball)
+                self.level = self.self_before_backtrack.level
 
-            #     return self.backtrack()
+                v_possible_moves = self.vertices[self.ball.pos][1]
+                v_moves_made = self.vertices[self.ball.pos][3]
 
-            # self.self_before_backtrack = None
-            # self.self_before_backtrack = deepcopy(self)
+                if set(v_possible_moves) == set(v_moves_made):
+                    self.vertices_to_return_to = self.vertices_to_return_to[:-1]
+
+                self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
+
+                self.self_before_backtrack = None
+                self.self_before_backtrack = deepcopy(self)
+
+                return self.backtrack()
 
             return self.backtrack()
 
-        directions_taken = self.vertices[(self.ball.y, self.ball.x)][3]
+        directions_taken = self.vertices[self.ball.pos][3]
         depth_of_remaining_directions = {}
 
         for direction, depth in self.subtree_depths(self.ball).items():
@@ -399,26 +413,31 @@ class Maze:
             # End of subtreee. Vertex appeared more than once on this level. Backtrack
             if self.vertices_to_return_to in ([], None):
                 if self.log:
-                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[(self.ball.y, self.ball.x)]}")
+                    print(f"{self}\nat {self.ball} on level {self.level} possible moves {self.vertices[self.ball.pos]}")
 
                 return
 
-            # if self.self_before_backtrack is None:
-            #     self.self_before_backtrack = deepcopy(self)
-            # elif self.solved_state == self.self_before_backtrack.solved_state:
-            #     if self.log:
-            #         print(f"useless backtrack\n{self}")
+            if self.self_before_backtrack is None:
+                self.self_before_backtrack = deepcopy(self)
+            elif self.solved_state == self.self_before_backtrack.solved_state:
+                if self.log:
+                    print(f"useless backtrack\n{self}")
 
-            #     self.ball = deepcopy(self.self_before_backtrack.ball)
-            #     self.level = self.self_before_backtrack.level
-            #     self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
-            #     self.self_before_backtrack = None
-            #     self.self_before_backtrack = deepcopy(self)
+                self.ball = deepcopy(self.self_before_backtrack.ball)
+                self.level = self.self_before_backtrack.level
 
-            #     return self.backtrack()
+                v_possible_moves = self.vertices[self.ball.pos][1]
+                v_moves_made = self.vertices[self.ball.pos][3]
 
-            # self.self_before_backtrack = None
-            # self.self_before_backtrack = deepcopy(self)
+                if set(v_possible_moves) == set(v_moves_made):
+                    self.vertices_to_return_to = self.vertices_to_return_to[:-1]
+
+                self.moves_made = deepcopy(self.self_before_backtrack.moves_made)
+
+                self.self_before_backtrack = None
+                self.self_before_backtrack = deepcopy(self)
+
+                return self.backtrack()
 
             return self.backtrack()
 
@@ -432,7 +451,7 @@ class Maze:
         if self.log:
             print(f"Solved: {self.is_solved} - at {self.ball} on level {self.level} - taking {chosen_direction} to {getattr(self.ball, chosen_direction)}")
 
-        self.vertices[(self.ball.y, self.ball.x)][3].append(chosen_direction)
+        self.vertices[self.ball.pos][3].append(chosen_direction)
         self.move_ball(chosen_direction)
         self.level += 1
 
