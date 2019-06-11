@@ -310,14 +310,6 @@ class Maze:
 
         return max_depth
 
-    def get_lowest_level_of_vertex(self, vertex):
-        spanning_tree = self.spanning_trees[self.start_position]
-
-        for level, vertices in spanning_tree.items():
-            for v in vertices:
-                if vertex in v:
-                    return level
-
     def return_to_vertex(self, vertex, level):
         route_back = self.get_shortest_route(self.ball, vertex)
 
